@@ -10,6 +10,11 @@ Your ship has one rear booster. Gravity always pulls you down, and touching rock
 - **Local play:** 4 players on one keyboard and/or gamepads
 - **Online play:** host/join by address
 
+## Download
+
+Get **Thrustfall.exe** from the [latest release](https://github.com/kielpedia/thrustfall/releases/latest) and run it. No install is needed.
+Windows may show a SmartScreen warning because the game isn't code-signed: click **More info → Run anyway**.
+
 ## Controls
 
 | Player | Thrust | Turn | Fire |
@@ -38,7 +43,18 @@ When Windows Firewall asks about Thrustfall the first time you host, click **All
 
 Online, each PC has one player, who uses the P1 keys or the first gamepad. The host's PC can still have extra local players, and CPUs fill any empty seats. If a friend drops mid-match, a CPU takes over their ship.
 
-## Building the game to share
+## Releasing a new version
+
+GitHub builds the `.exe` for you. Raise `VERSION` in `scripts/cfg.gd` (for example to `"0.7"`), commit, then run:
+
+```
+git tag v0.7
+git push origin main v0.7
+```
+
+The **Release** workflow runs the self-tests, exports `Thrustfall.exe` and publishes it at [Releases](https://github.com/kielpedia/thrustfall/releases). The tag must match `VERSION`, or the build stops.
+
+### Building on your own PC
 
 1. Open the project in Godot 4.7.2.
 2. Go to **Editor → Manage Export Templates → Download and Install** (needed once).
