@@ -1,0 +1,77 @@
+# Builds Thrustfall.exe and publishes it as a GitHub Release.
+# Trigger: push a tag that matches Cfg.VERSION, e.g.  git tag v0.6 && git push origin v0.6
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the game version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(sed -n 's/^const VERSION := "\(.*\)".*/\1/p' scripts/cfg.gd)
+          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} but scripts/cfg.gd says VERSION $v. Make them match."
+            exit 1
+          fi
+
+      - name: Download Godot and export templates
+        run: |
+          base=https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable
+          curl -fsSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q godot.zip
+          mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 godot
+          dest=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$dest"
+          unzip -q templates.tpz
+          mv templates/* "$dest/"
+          rm -rf templates godot.zip templates.tpz
+
+      - name: Run the self-tests
+        run: |
+          ./godot --headless --path . --import || true
+          ./godot --headless --path . -- --autotest 2>&1 | tee autotest.log
+          if grep -q "SCRIPT ERROR\|STUCK" autotest.log; then exit 1; fi
+          grep -q "AUTOTEST done" autotest.log
+
+      - name: Export Windows build
+        run: |
+          mkdir -p build
+          ./godot --headless --path . --export-release "Windows Desktop" build/Thrustfall.exe
+          ls -l build
+          test -s build/Thrustfall.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" build/Thrustfall.exe \
+            --title "Thrustfall ${GITHUB_REF_NAME}" \
+            --notes "Download **Thrustfall.exe** below and run it. No install is needed.
+
+          Everyone playing online together needs this same version (${GITHUB_REF_NAME}).
+          Windows may show a SmartScreen warning because the game isn't code-signed: click **More info → Run anyway**.
+
+          How to host and join: see the [README](https://github.com/${GITHUB_REPOSITORY}#playing-online-with-friends)."
+
+      - name: Keep the build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: Thrustfall-windows
+          path: build/Thrustfall.exe
