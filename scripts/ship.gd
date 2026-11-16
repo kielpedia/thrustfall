@@ -38,7 +38,7 @@ func has_fx(kind: String) -> bool:
 
 
 func grav() -> float:
-	return Cfg.GRAVITY * (0.3 if has_fx("feather") else 1.0)
+	return main.gravity * (0.3 if has_fx("feather") else 1.0)
 
 
 ## ground = the pad surface point; the ship is placed resting on it.

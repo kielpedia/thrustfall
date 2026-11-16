@@ -5,6 +5,7 @@ A gravity spaceship brawler for up to 4 players, made in Godot 4.7.
 Your ship has one rear booster. Gravity always pulls you down, and touching rock blows you up unless you land gently, upright and feet first. Every map is randomly generated, and one shot kills.
 
 - **Modes:** Rounds (last ship standing), Stock (lives and respawns), Timed (most kills; crashes cost a point)
+- **World settings:** gravity (0.5x-1.5x) and open space (50-80%), each fixed or rerolled every round
 - **Teams** with optional friendly fire, **6 power-ups**, **10 ship hulls** with shape-accurate hitboxes
 - **CPU pilots** to fill empty seats
 - **Local play:** 4 players on one keyboard and/or gamepads
@@ -64,7 +65,7 @@ The **Release** workflow runs the self-tests, exports `Thrustfall.exe` and publi
 ## Developer tests
 
 ```
-godot --headless --path . -- --autotest                          # map generator, hulls, every mode with 4 CPUs
+godot --headless --path . -- --autotest [--grav 1.5] [--open 0.5]   # map generator, hulls, every mode with 4 CPUs
 godot --headless --path . -- --nethost                           # online test: host...
 godot --headless --path . -- --netjoin 127.0.0.1 --lag 120       # ...and a guest with 120 ms fake lag
 godot --path . -- --demo [--teams] [--stock|--timed]             # watch CPUs play

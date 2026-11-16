@@ -134,9 +134,19 @@ func _fly(out: Dictionary, los: bool, dist: float) -> void:
 		if h < 70.0:
 			rep -= d * (1.0 - h / 70.0)
 	vd += rep * 220.0
+	# never climb faster than gravity can stop us before the rock overhead
+	# (straight up only: angled rays would hit the sides of every vertical shaft)
+	# Only matters in low gravity; at normal gravity the old, bolder climbing is fine.
+	if ship.grav() < Cfg.GRAVITY * 0.9:
+		var head: float = t.ray_dist(pos, Vector2.UP, 240.0)
+		var max_up := sqrt(2.0 * ship.grav() * maxf(head - 28.0, 0.0)) + 25.0
+		vd.y = maxf(vd.y, -max_up)
 	# about to hit something: brake
 	if vel.length() > 10.0:
 		var look := vel.length() * 0.8 + 20.0
+		if vel.y < 0.0:
+			# rising: in low gravity it takes much longer to stop, so look further up
+			look = maxf(look, vel.y * vel.y / (2.0 * ship.grav()) + 25.0)
 		if t.ray_dist(pos, vel.normalized(), look) < look:
 			vd -= vel * 0.8
 	_steer(out, vd)
@@ -145,15 +155,20 @@ func _fly(out: Dictionary, los: bool, dist: float) -> void:
 ## Turn and thrust so velocity moves toward vd, fighting gravity.
 func _steer(out: Dictionary, vd: Vector2) -> void:
 	var a: Vector2 = (vd - ship.vel) * 2.2
-	a.y -= ship.grav()
+	var g: float = ship.grav()
+	a.y -= g
+	# point the nose as if gravity were near normal: in low gravity this stops the
+	# bot tipping far over (and scraping rock) to chase small sideways corrections
 	var want := a
+	var g_feel := maxf(g, Cfg.GRAVITY * 0.8)
+	want.y -= g_feel - g
 	if a.y > 0.0:
 		# wants to go down faster than gravity alone: just coast upright-ish
 		want = Vector2(a.x * 0.3, -60.0)
 	var ta := atan2(want.x, -want.y)
 	var err := wrapf(ta - ship.rotation, -PI, PI)
 	out.turn = clampf(err * 5.0, -1.0, 1.0)
-	out.thrust = a.y <= 0.0 and absf(err) < 0.6 and ship.fwd().dot(a) > ship.grav() * 0.6
+	out.thrust = a.y <= 0.0 and absf(err) < 0.6 and ship.fwd().dot(a) > g_feel * 0.6
 
 
 func _aim(out: Dictionary, dt: float) -> void:
@@ -162,7 +177,7 @@ func _aim(out: Dictionary, dt: float) -> void:
 	var tp: Vector2 = target.position
 	var tt := pos.distance_to(tp) / Cfg.BULLET_SPEED
 	var aim: Vector2 = tp + target.vel * tt - vel * tt
-	aim.y -= 0.5 * Cfg.GRAVITY * Cfg.BULLET_GRAV * tt * tt
+	aim.y -= 0.5 * main.gravity * Cfg.BULLET_GRAV * tt * tt
 	noise_t -= dt
 	if noise_t <= 0.0:
 		aim_noise = rng.randf_range(-0.07, 0.07)

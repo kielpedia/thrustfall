@@ -51,7 +51,7 @@ func update(dt: float) -> void:
 		q[2] -= dt
 		if q[2] <= 0.0:
 			continue
-		q[1].y += Cfg.GRAVITY * 0.6 * dt
+		q[1].y += main.gravity * 0.6 * dt
 		q[1] *= 1.0 - 1.5 * dt
 		q[0] += q[1] * dt
 		keep.append(q)

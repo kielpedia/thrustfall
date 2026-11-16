@@ -14,6 +14,7 @@ var pads: Array[Vector2i] = []        # landing pads (open node just above a fla
 var rock_col := Color("2b2445")
 var edge_col := Color("9d86ff")
 var pad_col := Color("5ef2ff")
+var open_frac := 0.0                  # share of the map that is open space
 
 
 func i_of(x: int, y: int) -> int:
@@ -151,14 +152,21 @@ func flow_waypoint(p: Vector2, dist: PackedInt32Array, steps: int) -> Vector2:
 # ------------------------------------------------------------------ generation
 
 ## Builds a new map with n_pads spread-out landing pads. Returns false if it had to give up.
-func generate(seed: int, n_pads: int) -> bool:
+## open = fraction of the map that should be open space (0.4-0.85), or < 0 for anything 50-85%.
+func generate(seed: int, n_pads: int, open := -1.0) -> bool:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
 	var ok := false
 	for attempt in 60:
-		if _try(rng, n_pads):
+		if _try(rng, n_pads, open):
 			ok = true
 			break
+	if not ok and open > 0.0:
+		# couldn't hit that exact size: settle for any good map rather than a broken one
+		for attempt in 60:
+			if _try(rng, n_pads, -1.0):
+				ok = true
+				break
 	var hue := rng.randf()
 	rock_col = Color.from_hsv(hue, 0.45, 0.24)
 	edge_col = Color.from_hsv(hue, 0.5, 0.95)
@@ -167,7 +175,7 @@ func generate(seed: int, n_pads: int) -> bool:
 	return ok
 
 
-func _try(rng: RandomNumberGenerator, n_pads: int) -> bool:
+func _try(rng: RandomNumberGenerator, n_pads: int, want: float) -> bool:
 	var noise := FastNoiseLite.new()
 	noise.seed = rng.randi()
 	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -178,19 +186,36 @@ func _try(rng: RandomNumberGenerator, n_pads: int) -> bool:
 	edge.frequency = 0.1
 	var thr := rng.randf_range(0.1, 0.24)
 	var floor_h := rng.randf_range(2.0, 4.5)
+	# very open maps need thinner border walls to have room
+	var wall_k := clampf((0.86 - want) / 0.16, 0.35, 1.0) if want > 0.0 else 1.0
 
 	field.resize(Cfg.GW * Cfg.GH)
+	var raw := PackedFloat32Array()
+	raw.resize(field.size())
+	var wall := PackedFloat32Array()
+	wall.resize(field.size())
+	var inner := PackedFloat32Array()   # noise values where the border walls leave room
 	for y in Cfg.GH:
 		for x in Cfg.GW:
-			var v := (noise.get_noise_2d(x, y) - thr) * 4.0 + 0.5
+			var i := i_of(x, y)
 			var e := (edge.get_noise_2d(x, y) + 1.0) * 0.5
 			var side := mini(mini(x, Cfg.GW - 1 - x), y)
-			var v_side := (1.2 + e * 2.5 - side) * 0.7 + 0.5
-			var v_floor := (floor_h + e * 4.0 - (Cfg.GH - 1 - y)) * 0.7 + 0.5
-			v = clampf(maxf(v, maxf(v_side, v_floor)), 0.0, 1.0)
-			if x == 0 or y == 0 or x == Cfg.GW - 1 or y == Cfg.GH - 1:
-				v = 1.0
-			field[i_of(x, y)] = v
+			var v_side := (1.2 + e * 2.5 * wall_k - side) * 0.7 + 0.5
+			var v_floor := (floor_h * wall_k + e * 4.0 * wall_k - (Cfg.GH - 1 - y)) * 0.7 + 0.5
+			raw[i] = noise.get_noise_2d(x, y)
+			wall[i] = 1.0 if x == 0 or y == 0 or x == Cfg.GW - 1 or y == Cfg.GH - 1 else maxf(v_side, v_floor)
+			if wall[i] < 0.5:
+				inner.append(raw[i])
+	if want > 0.0:
+		# pick the rock threshold that opens up the wanted share of the map
+		# (+1% because sealed pockets and pad shelves get filled in afterwards)
+		inner.sort()
+		var k := int((want + 0.01) * field.size())
+		if k >= inner.size():
+			return false   # these border walls leave too little room; try another layout
+		thr = inner[k]
+	for i in field.size():
+		field[i] = clampf(maxf((raw[i] - thr) * 4.0 + 0.5, wall[i]), 0.0, 1.0)
 
 	_remove_specks()
 	_keep_main_cave()
@@ -199,8 +224,12 @@ func _try(rng: RandomNumberGenerator, n_pads: int) -> bool:
 		if v < 0.5:
 			open += 1
 	var frac := float(open) / field.size()
-	if frac < 0.5 or frac > 0.85:
+	if want > 0.0:
+		if absf(frac - want) > 0.05:
+			return false
+	elif frac < 0.5 or frac > 0.85:
 		return false
+	open_frac = frac
 	if not _place_pads(rng, n_pads):
 		return false
 	_keep_main_cave()

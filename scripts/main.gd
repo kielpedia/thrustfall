@@ -55,6 +55,15 @@ const ROUND_OPTS := [3, 5, 7]
 const STOCK_OPTS := [1, 3, 5, 10]
 const TIME_OPTS := [60.0, 120.0, 180.0, 300.0]
 const RESPAWN_DELAY := 2.0
+# world settings: a fixed value, or -1 = roll a new one every round / rematch
+const GRAV_OPTS := [0.5, 0.75, 1.0, 1.25, 1.5, -1.0]     # x normal gravity
+const OPEN_OPTS := [0.5, 0.6, 0.7, 0.8, -1.0]           # share of the map that is open space
+const GRAV_RANDOM := [0.5, 1.5]
+const OPEN_RANDOM := [0.5, 0.8]
+var gravity_opt := 1.0
+var open_opt := -1.0
+var gravity := Cfg.GRAVITY     # px/s^2 in effect right now
+var map_open := 0.65           # open-space target of the current map
 
 # respawn-mode state
 var lives := [0, 0, 0, 0]
@@ -246,6 +255,10 @@ func _unhandled_input(e: InputEvent) -> void:
 				menu_action("value")
 			elif k == KEY_P:
 				menu_action("pu")
+			elif k == KEY_G:
+				menu_action("grav")
+			elif k == KEY_O:
+				menu_action("open")
 			elif k == KEY_F:
 				menu_action("ff")
 		elif e is InputEventJoypadButton and e.pressed and e.button_index == JOY_BUTTON_A and e.device < 4 and not net.is_client():
@@ -303,6 +316,12 @@ func menu_action(a: String, remote := false) -> void:
 			teams = not teams
 			if teams:
 				_balance_teams()
+		"grav":
+			gravity_opt = GRAV_OPTS[(GRAV_OPTS.find(gravity_opt) + 1) % GRAV_OPTS.size()]
+		"open":
+			open_opt = OPEN_OPTS[(OPEN_OPTS.find(open_opt) + 1) % OPEN_OPTS.size()]
+			_roll_world()
+			_new_map(4)   # preview the new size behind the menu
 		"pu":
 			powerups = not powerups
 		"ff":
@@ -400,6 +419,7 @@ func go_title() -> void:
 	for s in ships:
 		s.alive = false
 		s.visible = false
+	_roll_world()
 	_new_map(4)
 	if net.is_host():
 		net.seat_waiting()
@@ -418,9 +438,29 @@ func start_match() -> void:
 	_next_round()
 
 
+## Picks this round's gravity and open space (rolls the ones set to RANDOM).
+func _roll_world() -> void:
+	var g: float = gravity_opt if gravity_opt > 0.0 else snappedf(rng.randf_range(GRAV_RANDOM[0], GRAV_RANDOM[1]), 0.05)
+	gravity = Cfg.GRAVITY * g
+	map_open = open_opt if open_opt > 0.0 else snappedf(rng.randf_range(OPEN_RANDOM[0], OPEN_RANDOM[1]), 0.01)
+
+
+## e.g. "GRAVITY 1.25x · 64% OPEN"
+func world_label() -> String:
+	return "GRAVITY %sx  ·  %d%% OPEN" % [str(snappedf(gravity / Cfg.GRAVITY, 0.01)), roundi(terrain.open_frac * 100.0)]
+
+
+static func grav_label(o: float) -> String:
+	return "RANDOM" if o < 0.0 else str(o) + "x"
+
+
+static func open_label(o: float) -> String:
+	return "RANDOM" if o < 0.0 else "%d%%" % roundi(o * 100.0)
+
+
 func _new_map(n: int) -> void:
 	var seed := rng.randi()
-	if not terrain.generate(seed, maxi(n, 2)):
+	if not terrain.generate(seed, maxi(n, 2), map_open):
 		stats.map_fail += 1
 	bg.regen(seed)
 	map_seed = seed
@@ -441,6 +481,7 @@ func _next_round() -> void:
 		if slots[i].type != "off":
 			active.append(i)
 	# respawn modes keep spare pads to come back on
+	_roll_world()
 	_new_map(active.size() if game_mode == "rounds" else 4)
 	var order := range(active.size())
 	order.shuffle()
@@ -696,7 +737,7 @@ func _update_bullets(dt: float) -> void:
 	var keep := []
 	for b in bullets:
 		b.age += dt
-		b.v.y += Cfg.GRAVITY * Cfg.BULLET_GRAV * dt
+		b.v.y += gravity * Cfg.BULLET_GRAV * dt
 		var prev: Vector2 = b.p
 		b.p += b.v * dt
 		if b.age > Cfg.BULLET_LIFE:
@@ -884,6 +925,8 @@ func _net_test(args: PackedStringArray) -> void:
 		]
 		game_mode = "timed"
 		time_limit = 45.0
+		gravity_opt = -1.0
+		open_opt = -1.0
 		_new_map(4)
 		while not slots.any(func(s): return s.type == "net"):
 			await get_tree().process_frame
@@ -896,6 +939,7 @@ func _net_test(args: PackedStringArray) -> void:
 		start_match()
 		while state != "match_end":
 			await get_tree().process_frame
+		print("NETHOST world: ", world_label())
 		print("NETHOST match over: %s pts=%s kills=%s inputs_rcvd=%d max_snap=%dB ack=%s" % [msg, str(points), str(kills),
 				net.stat_inputs, net.stat_max_bytes, str(net.inputs.values().map(func(d): return d.ack))])
 		await get_tree().create_timer(1.0).timeout
@@ -942,6 +986,17 @@ func _autotest() -> void:
 		if not terrain.generate(k * 7919 + 1, 4):
 			fails += 1
 	print("MAPGEN 100 maps, failures=%d, %d ms" % [fails, Time.get_ticks_msec() - t0])
+	for want in [0.5, 0.6, 0.7, 0.8, 0.85]:
+		var t1 := Time.get_ticks_msec()
+		var f2 := 0
+		var lo := 1.0
+		var hi := 0.0
+		for k in 25:
+			if not terrain.generate(k * 104729 + 7, 4, want):
+				f2 += 1
+			lo = minf(lo, terrain.open_frac)
+			hi = maxf(hi, terrain.open_frac)
+		print("MAPGEN open=%d%%: 25 maps, failures=%d, got %d-%d%%, %d ms/map" % [want * 100, f2, lo * 100, hi * 100, (Time.get_ticks_msec() - t1) / 25])
 	# every hull must spawn clear of rock and survive a gentle drop onto its pad
 	var s0 = ships[0]
 	var hull_report := []
@@ -959,6 +1014,13 @@ func _autotest() -> void:
 	s0.alive = false
 	var configs := [["rounds", false, 20], ["rounds", true, 20], ["stock", false, 3], ["stock", true, 3], ["timed", false, 3], ["timed", true, 3]]
 	time_limit = 60.0
+	gravity_opt = -1.0
+	open_opt = -1.0
+	var args := OS.get_cmdline_user_args()
+	if "--grav" in args:
+		gravity_opt = float(args[args.find("--grav") + 1])
+	if "--open" in args:
+		open_opt = float(args[args.find("--open") + 1])
 	for c in configs:
 		game_mode = c[0]
 		teams = c[1]
@@ -981,6 +1043,8 @@ func _autotest() -> void:
 				if s.alive and s.hits_at(s.position, s.rotation) != 0:
 					print("STUCK ship %d at %s" % [s.idx, s.position])
 		var r: int = maxi(stats.rounds, 1)
+		if game_mode != "rounds":
+			print("    last world: ", world_label())
 		print("AUTOTEST %s%s %s=%d wins=%d draws=%d avg_len=%.1fs shot_kills=%d crashes=%d collisions=%d pickups=%d missile_kills=%d blocks=%d ricochets=%d map_fail=%d sim=%ds" % [
 			game_mode, " teams" if teams else "", "rounds" if game_mode == "rounds" else "matches", stats.rounds, stats.wins, stats.draws,
 			stats.round_time / r, stats.shot, stats.crash, stats.collide, stats.pickups, stats.missile_kills, stats.blocks,

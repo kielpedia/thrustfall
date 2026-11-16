@@ -62,6 +62,9 @@ func _draw() -> void:
 				_status(i, Vector2(x, 58), -1)
 			x += 160.0
 
+	if st != "countdown":
+		text(main.world_label(), Vector2(Cfg.W - 14, Cfg.H - 12), 12, Color(1, 1, 1, 0.35), 1)
+
 	if main.game_mode == "timed" and st != "countdown":
 		var ot: bool = main.overtime
 		text("OVERTIME" if ot else main.clock(main.match_t), Vector2(cx, 22), 26 if ot else 28,
@@ -69,8 +72,9 @@ func _draw() -> void:
 
 	match st:
 		"countdown":
-			text(main.msg, Vector2(cx, Cfg.H / 2.0 - 40), 56, Color.WHITE)
-			text("%d" % ceili(main.timer / 0.6), Vector2(cx, Cfg.H / 2.0 + 30), 40, Color("ffd23f"))
+			text(main.msg, Vector2(cx, Cfg.H / 2.0 - 50), 56, Color.WHITE)
+			text(main.world_label(), Vector2(cx, Cfg.H / 2.0 + 2), 18, Color("b07cff"))
+			text("%d" % ceili(main.timer / 0.6), Vector2(cx, Cfg.H / 2.0 + 48), 40, Color("ffd23f"))
 		"round_end":
 			if main.awarded:
 				text(main.msg, Vector2(cx, Cfg.H / 2.0), 52, main.msg_col)
@@ -155,25 +159,36 @@ func _draw_title(cx: float) -> void:
 	# match options
 	var bx := cx - 494.0
 	var gold := Color("ffd23f")
-	button(Rect2(bx, 155, 200, 40), "GAME: " + main.game_mode.to_upper(), "game", gold, 16)
-	button(Rect2(bx + 212, 155, 150, 40), main.rule_label(), "value", gold, 16)
-	button(Rect2(bx + 374, 155, 170, 40), "TEAMS: " + ("ON" if main.teams else "OFF"), "teams",
+	button(Rect2(bx, 148, 200, 38), "GAME: " + main.game_mode.to_upper(), "game", gold, 16)
+	button(Rect2(bx + 212, 148, 150, 38), main.rule_label(), "value", gold, 16)
+	button(Rect2(bx + 374, 148, 170, 38), "TEAMS: " + ("ON" if main.teams else "OFF"), "teams",
 			Color("6ec3ff") if main.teams else Color(1, 1, 1, 0.5), 16)
-	button(Rect2(bx + 556, 155, 200, 40), "POWER-UPS: " + ("ON" if main.powerups else "OFF"), "pu",
+	button(Rect2(bx + 556, 148, 200, 38), "POWER-UPS: " + ("ON" if main.powerups else "OFF"), "pu",
 			Color("5ee87d") if main.powerups else Color(1, 1, 1, 0.5), 16)
 	if main.teams:
-		button(Rect2(bx + 768, 155, 220, 40), "FRIENDLY FIRE: " + ("ON" if main.friendly_fire else "OFF"), "ff",
+		button(Rect2(bx + 768, 148, 220, 38), "FRIENDLY FIRE: " + ("ON" if main.friendly_fire else "OFF"), "ff",
 				Color("ff6b6b") if main.friendly_fire else Color(1, 1, 1, 0.5), 16)
+	# world: gravity + open space, fixed or rolled fresh every round
+	var violet := Color("b07cff")
+	button(Rect2(bx, 194, 362, 38), "GRAVITY: " + main.grav_label(main.gravity_opt), "grav", violet, 16)
+	button(Rect2(bx + 374, 194, 382, 38), "OPEN SPACE: " + main.open_label(main.open_opt), "open", violet, 16)
+	var rolls := []
+	if main.gravity_opt < 0.0:
+		rolls.append("gravity %s-%sx" % [main.GRAV_RANDOM[0], main.GRAV_RANDOM[1]])
+	if main.open_opt < 0.0:
+		rolls.append("open space %d-%d%%" % [main.OPEN_RANDOM[0] * 100, main.OPEN_RANDOM[1] * 100])
+	text("rerolled each round: " + ", ".join(rolls) if rolls.size() > 0 else "same every round",
+			Vector2(bx + 768, 213), 13, Color(violet, 0.85), -1)
 	var desc: String = {
 		"rounds": "Last ship standing wins the round. New map every round.",
 		"stock": "Everyone gets %s and respawns on a pad. Last one with lives left wins." % main.rule_label().to_lower(),
 		"timed": "Respawn until the clock runs out. Most kills wins; crashing or shooting yourself costs a point.",
 	}[main.game_mode]
-	text(desc, Vector2(cx, 215), 14, Color("c8c8e0"))
+	text(desc, Vector2(cx, 250), 14, Color("c8c8e0"))
 
 	# player slots
 	for i in 4:
-		var y := 240.0 + i * 64.0
+		var y := 270.0 + i * 60.0
 		var sl: Dictionary = main.slots[i]
 		var on: bool = sl.type != "off"
 		var col: Color = Cfg.PALETTE[sl.color] if on else Color(1, 1, 1, 0.3)
@@ -224,7 +239,7 @@ func _draw_title(cx: float) -> void:
 		if problem != "":
 			text(problem, Vector2(cx, 584), 15, Color("ff4d5e"))
 	_draw_net(cx)
-	text("Click, or: 1-4 player · turn keys = color · thrust = ship · fire = team · M game · V setting · T teams · P power-ups · ENTER",
+	text("Click, or: 1-4 player · turn keys = color · thrust = ship · fire = team · M game · V setting · T teams · P power-ups · G gravity · O open · ENTER",
 			Vector2(cx, 632), 14, Color("9fa3c8"))
 	text("Land gently and upright to rest. Hit rock fast or sideways and you explode.",
 			Vector2(cx, 654), 14, Color("9fa3c8"))

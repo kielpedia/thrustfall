@@ -357,13 +357,14 @@ func _pack() -> Dictionary:
 	var d := {"t": host_t, "st": m.state, "tm": m.timer, "msg": m.msg, "mc": m.msg_col, "rn": m.round_n,
 		"rt": m.round_t, "sc": m.scores, "ts": m.team_scores, "lv": m.lives, "pt": m.points,
 		"rs": m.respawn_t, "mt": m.match_t, "ot": m.overtime, "aw": m.awarded, "sk": m.shake,
-		"seed": m.map_seed, "np": m.map_pads, "th": m.map_hash, "ships": sh, "b": bl, "m": ms, "pk": pk}
+		"seed": m.map_seed, "np": m.map_pads, "op": m.map_open, "g": m.gravity, "th": m.map_hash, "ships": sh, "b": bl, "m": ms, "pk": pk}
 	# the lobby rarely changes mid-match: send it every snapshot on the title screen, else now and then
 	if m.state == "title" or tick % 30 == 0:
 		var lobby := []
 		for s in m.slots:
 			lobby.append([s.type, s.color, s.team, s.hull, s.get("peer", 0)])
-		d.lobby = [lobby, m.teams, m.powerups, m.friendly_fire, m.game_mode, m.win_rounds, m.stock_lives, m.time_limit]
+		d.lobby = [lobby, m.teams, m.powerups, m.friendly_fire, m.game_mode, m.win_rounds, m.stock_lives, m.time_limit,
+				m.gravity_opt, m.open_opt]
 	return d
 
 
@@ -394,17 +395,21 @@ func _on_snap(s: Dictionary) -> void:
 		m.win_rounds = lb[5]
 		m.stock_lives = lb[6]
 		m.time_limit = lb[7]
+		m.gravity_opt = lb[8]
+		m.open_opt = lb[9]
 	if my_slot() >= 0 and status.begins_with("Connected"):
 		_say("You're in! The host starts the match.", Color("5ee87d"))
 	if s.seed != map_seed:
 		map_seed = s.seed
-		m.terrain.generate(s.seed, s.np)
+		m.map_open = s.op
+		m.terrain.generate(s.seed, s.np, s.op)
 		m.bg.regen(s.seed)
 		m.map_seed = s.seed
 		stat.maps += 1
 		if hash(m.terrain.field) != s.th:
 			stat.map_mismatch += 1
 			push_warning("map differs from the host's")
+	m.gravity = s.g   # before replaying our ship's inputs
 	var prev_state: String = m.state
 	m.state = s.st
 	if m.state == "title" and prev_state != "title":

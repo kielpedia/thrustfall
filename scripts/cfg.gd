@@ -1,7 +1,7 @@
 extends RefCounted
 ## Shared constants. Tweak the game's feel here.
 
-const VERSION := "0.6"          # online players must run the same version
+const VERSION := "0.7"          # online players must run the same version
 
 const CELL := 16               # px between terrain grid nodes
 const GW := 81                 # grid nodes across
@@ -9,7 +9,7 @@ const GH := 46                 # grid nodes down
 const W := (GW - 1) * CELL     # 1280 px
 const H := (GH - 1) * CELL     # 720 px
 
-const GRAVITY := 95.0          # px/s^2, always pulls down
+const GRAVITY := 95.0          # px/s^2, always pulls down (normal; the lobby can scale it)
 const THRUST := 240.0          # px/s^2 from the rear booster
 const TURN := 4.0              # rad/s
 const DRAG := 0.12             # fraction of speed lost per second
