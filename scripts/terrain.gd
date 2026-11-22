@@ -167,6 +167,12 @@ func generate(seed: int, n_pads: int, open := -1.0) -> bool:
 			if _try(rng, n_pads, -1.0):
 				ok = true
 				break
+	# still nothing: keep going. A broken map can leave too few pads, and then two
+	# ships spawn on the same pad and destroy each other the moment the round starts.
+	var extra := 0
+	while not ok and extra < 400:
+		extra += 1
+		ok = _try(rng, n_pads, -1.0)
 	var hue := rng.randf()
 	rock_col = Color.from_hsv(hue, 0.45, 0.24)
 	edge_col = Color.from_hsv(hue, 0.5, 0.95)

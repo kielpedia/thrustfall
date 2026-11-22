@@ -56,6 +56,8 @@ func spawn(ground: Vector2) -> void:
 	missiles = 0
 	effects.clear()
 	visible = true
+	if main != null and main.net != null:
+		main.net.on_spawn(idx)
 	queue_redraw()
 
 

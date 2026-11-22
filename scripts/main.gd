@@ -499,6 +499,8 @@ func _next_round() -> void:
 		s.hull = sl.hull
 		s.team = sl.team if teams else s.idx
 		s.bot = BotScript.new(s, self) if s.is_cpu else null
+		if k >= terrain.pads.size():
+			push_warning("map has %d pads for %d ships" % [terrain.pads.size(), active.size()])
 		s.spawn(terrain.pad_spawn(order[k] % terrain.pads.size()))
 	state = "countdown"
 	timer = 1.8
@@ -1011,6 +1013,17 @@ func _autotest() -> void:
 			s0.step(DT, {"turn": 0.0, "thrust": false, "fire": false})
 		hull_report.append("%s:%s" % [Hulls.hull_name(h), "ok" if clear and s0.alive and s0.landed else "FAIL(clear=%s alive=%s landed=%s)" % [clear, s0.alive, s0.landed]])
 	print("HULLS ", ", ".join(hull_report))
+	# a pad that reports its trigger as fully pressed from the start must not thrust
+	var res := []
+	for step_v in [1.0, 0.0, 1.0]:
+		var ev := InputEventJoypadMotion.new()
+		ev.device = 3
+		ev.axis = JOY_AXIS_TRIGGER_RIGHT
+		ev.axis_value = step_v
+		Input.parse_input_event(ev)
+		Input.flush_buffered_events()
+		res.append(Controls.read(3).thrust)
+	print("CONTROLS stuck trigger ignored until released: %s (expect [false, false, true])" % str(res))
 	s0.alive = false
 	var configs := [["rounds", false, 20], ["rounds", true, 20], ["stock", false, 3], ["stock", true, 3], ["timed", false, 3], ["timed", true, 3]]
 	time_limit = 60.0

@@ -7,6 +7,7 @@ const Hulls = preload("res://scripts/hulls.gd")
 
 var main
 var buttons := []   # [Rect2, action] rebuilt every frame on the title screen
+var held_t := [0.0, 0.0, 0.0, 0.0]   # how long each local seat has been holding thrust/turn
 
 
 ## align: 0 = center, -1 = left, 1 = right. pos.y is the vertical middle of the text.
@@ -226,7 +227,21 @@ func _draw_title(cx: float) -> void:
 				help = Controls.HELP[i] + "  · pad %d" % (i + 1)
 			elif sl.type == "net":
 				help = "online player (they pick their own color / ship)"
-			if help != "":
+			# a seat that "holds" thrust or turn for seconds on the menu = stuck controller
+			var keys := -1
+			if main.net.is_client():
+				keys = 0 if i == main.net.my_slot() else -1
+			elif sl.type == "human":
+				keys = i
+			var stuck := false
+			if keys >= 0:
+				var inp: Dictionary = Controls.read(keys)
+				held_t[i] = held_t[i] + get_process_delta_time() if inp.thrust or absf(inp.turn) > 0.5 else 0.0
+				stuck = held_t[i] > 2.0
+			if stuck:
+				text("INPUT HELD DOWN: check this player's keys / controller (pad %d)" % (keys + 1),
+						Vector2(help_x, y + 22), 13, Color("ff4d5e"), -1)
+			elif help != "":
 				text(help, Vector2(help_x, y + 22), 13 if main.teams else 14, Color(1, 1, 1, 0.7), -1)
 
 	var net = main.net

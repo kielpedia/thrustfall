@@ -13,7 +13,15 @@ const HELP := ["W thrust  A/D turn  S/Space fire", "Up thrust  Left/Right turn  
 const ACTS := ["left", "right", "thrust", "fire"]
 const PAD_BUTTONS := [[JOY_BUTTON_DPAD_LEFT], [JOY_BUTTON_DPAD_RIGHT], [JOY_BUTTON_A],
 		[JOY_BUTTON_X, JOY_BUTTON_B, JOY_BUTTON_RIGHT_SHOULDER]]
-const PAD_AXES := [[JOY_AXIS_LEFT_X, -1.0], [JOY_AXIS_LEFT_X, 1.0], [JOY_AXIS_TRIGGER_RIGHT, 1.0], []]
+# Stick turning and trigger thrust are read by hand in read(), not through the InputMap:
+# some pads (unknown models, DS4Windows / Steam Input doubles) report a trigger or
+# stick as fully pressed while it rests, which used to fly the ship into the rock.
+# An axis only counts once it has been seen near rest.
+const STICK_DEAD := 0.3
+const TRIGGER_ON := 0.5
+const REST := 0.2
+
+static var _armed := {}       # "device:pad guid:axis" -> true once seen at rest
 
 
 static func setup() -> void:
@@ -29,12 +37,6 @@ static func setup() -> void:
 				var e := InputEventJoypadButton.new()
 				e.device = i
 				e.button_index = b
-				InputMap.action_add_event(name, e)
-			if PAD_AXES[a].size() > 0:
-				var e := InputEventJoypadMotion.new()
-				e.device = i
-				e.axis = PAD_AXES[a][0]
-				e.axis_value = PAD_AXES[a][1]
 				InputMap.action_add_event(name, e)
 	_ensure("start")
 	for k in [KEY_ENTER, KEY_KP_ENTER]:
@@ -60,9 +62,24 @@ static func _ensure(name: String) -> void:
 		InputMap.add_action(name, 0.3)
 
 
+## Value of a pad axis, or 0 until that axis has been seen resting near 0.
+static func _axis(dev: int, axis: int) -> float:
+	var v := Input.get_joy_axis(dev, axis)
+	# keyed by the pad's id too, so a different pad plugged into this slot starts unarmed
+	var guid := Input.get_joy_guid(dev) if Input.get_connected_joypads().has(dev) else "-"
+	var key := "%d:%s:%d" % [dev, guid, axis]
+	if absf(v) < REST:
+		_armed[key] = true
+	return v if _armed.get(key, false) else 0.0
+
+
 static func read(i: int) -> Dictionary:
+	var turn := Input.get_axis("p%d_left" % i, "p%d_right" % i)
+	var stick := _axis(i, JOY_AXIS_LEFT_X)
+	if absf(stick) > STICK_DEAD:
+		turn = clampf(turn + stick, -1.0, 1.0)
 	return {
-		"turn": Input.get_axis("p%d_left" % i, "p%d_right" % i),
-		"thrust": Input.is_action_pressed("p%d_thrust" % i),
+		"turn": turn,
+		"thrust": Input.is_action_pressed("p%d_thrust" % i) or _axis(i, JOY_AXIS_TRIGGER_RIGHT) > TRIGGER_ON,
 		"fire": Input.is_action_pressed("p%d_fire" % i),
 	}

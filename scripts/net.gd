@@ -268,6 +268,14 @@ func _rpc_input(batch: Array) -> void:
 		d.q = d.q.slice(d.q.size() - 3)   # fell behind after a hiccup: catch up
 
 
+## Host: a ship just (re)spawned. Drop the guest's old input so the new ship doesn't
+## start out thrusting/turning with whatever they held when they last died.
+func on_spawn(k: int) -> void:
+	if inputs.has(k):
+		inputs[k].q.clear()
+		inputs[k].cur = _idle()
+
+
 ## Host: the input to use for net slot k this tick.
 func input_for(k: int) -> Dictionary:
 	var d: Dictionary = inputs.get(k, {})
