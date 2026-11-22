@@ -4,6 +4,7 @@ extends Node2D
 const Cfg = preload("res://scripts/cfg.gd")
 const Controls = preload("res://scripts/controls.gd")
 const Hulls = preload("res://scripts/hulls.gd")
+const Build = preload("res://scripts/build.gd")
 
 var main
 var buttons := []   # [Rect2, action] rebuilt every frame on the title screen
@@ -84,6 +85,7 @@ func _draw() -> void:
 			text(main.msg, Vector2(cx, Cfg.H / 2.0 - 30), 64, main.msg_col)
 			text("waiting for the host...     ESC leave" if main.net.is_client() else "ENTER rematch     ESC menu",
 					Vector2(cx, Cfg.H / 2.0 + 40), 22, Color.WHITE)
+			text(Build.label(Cfg.VERSION), Vector2(Cfg.W - 14, Cfg.H - 12), 12, Color(1, 1, 1, 0.45), 1)
 		"play":
 			if main.round_t < 1.0:
 				text("GO!", Vector2(cx, Cfg.H / 2.0), 64, Color(1, 1, 1, 1.0 - main.round_t))
@@ -155,6 +157,7 @@ func _team_board(t: int, x: float, align: int) -> void:
 func _draw_title(cx: float) -> void:
 	draw_rect(Rect2(0, 0, Cfg.W, Cfg.H), Color(0.02, 0.02, 0.08, 0.72))
 	text("THRUSTFALL", Vector2(cx, 70), 76, Color("ffd23f"))
+	text(Build.label(Cfg.VERSION), Vector2(Cfg.W - 14, 16), 13, Color(1, 1, 1, 0.45), 1)
 	text("Fight gravity. Don't touch the rock. One shot, one kill.", Vector2(cx, 125), 18, Color("c8c8e0"))
 
 	# match options

@@ -28,6 +28,12 @@ jobs:
             exit 1
           fi
 
+      - name: Stamp the build (commit + date shown on the title screen)
+        run: |
+          sed -i "s/^const COMMIT := .*/const COMMIT := \"${GITHUB_SHA::7}\"/" scripts/build.gd
+          sed -i "s/^const DATE := .*/const DATE := \"$(date -u +%Y-%m-%d)\"/" scripts/build.gd
+          grep -n "^const" scripts/build.gd
+
       - name: Download Godot and export templates
         run: |
           base=https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable
