@@ -1,4 +1,6 @@
-# Thrustfall
+<p align="center"><a href="docs/poster.jpg"><img src="docs/banner.jpg" alt="Thrustfall" width="100%"></a></p>
+
+<p align="center"><a href="https://github.com/kielpedia/thrustfall/releases/latest"><b>Download the latest Thrustfall.exe</b></a> · Windows, no install</p>
 
 A gravity spaceship brawler for up to 4 players, made in Godot 4.7.
 
