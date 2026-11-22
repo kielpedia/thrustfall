@@ -1,7 +1,7 @@
 extends RefCounted
 ## Shared constants. Tweak the game's feel here.
 
-const VERSION := "0.8"          # online players must run the same version
+const VERSION := "0.9"          # online players must run the same version
 
 const CELL := 16               # px between terrain grid nodes
 const GW := 81                 # grid nodes across
