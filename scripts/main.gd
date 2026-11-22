@@ -96,6 +96,8 @@ var map_seed := 0
 var map_pads := 0
 var map_hash := 0
 var next_id := 0
+var hist := []            # lag compensation: last HIST ticks of [alive, pos, rot] per ship, newest last
+const HIST := 36          # 0.3 s at 120 ticks/s
 var autotest_bot = null   # --netjoin test: a CPU flies the client's ship
 
 
@@ -481,6 +483,7 @@ func _next_round() -> void:
 		if slots[i].type != "off":
 			active.append(i)
 	# respawn modes keep spare pads to come back on
+	hist.clear()
 	_roll_world()
 	_new_map(active.size() if game_mode == "rounds" else 4)
 	var order := range(active.size())
@@ -698,6 +701,7 @@ func _sim(dt: float) -> void:
 			else:
 				inp = Controls.read(s.idx)
 			s.step(dt, inp)
+	_record_history()
 	_update_bullets(dt)
 	_update_missiles(dt)
 	if powerups:
@@ -735,35 +739,70 @@ func _can_hit(s, owner: int, team: int, age: float, grace: float) -> bool:
 	return true
 
 
+## Moves a bullet one tick: "ok", "bounced" (ricochet), "rock" or "gone" (too old).
+## Online guests run this too, for the bullets they draw the moment they fire.
+func move_bullet(b: Dictionary, dt: float) -> String:
+	b.age += dt
+	b.v.y += gravity * Cfg.BULLET_GRAV * dt
+	var prev: Vector2 = b.p
+	b.p += b.v * dt
+	if b.age > Cfg.BULLET_LIFE:
+		return "gone"
+	if not terrain.solid_at(b.p):
+		return "ok"
+	if b.bounce <= 0:
+		return "rock"
+	# ricochet: flip whichever axis ran into rock
+	b.bounce -= 1
+	var fx_x: bool = terrain.solid_at(Vector2(b.p.x, prev.y))
+	var fx_y: bool = terrain.solid_at(Vector2(prev.x, b.p.y))
+	if fx_x or not fx_y:
+		b.v.x = -b.v.x
+	if fx_y or not fx_x:
+		b.v.y = -b.v.y
+	b.v *= 0.9
+	b.p = prev
+	return "bounced"
+
+
+func _record_history() -> void:
+	var now := []
+	for s in ships:
+		now.append([s.alive, s.position, s.rotation])
+	hist.append(now)
+	if hist.size() > HIST:
+		hist.pop_front()
+
+
+## Where ship s was `back` ticks ago: [pos, rot], or [] if it wasn't alive then.
+func _pose(s, back: int) -> Array:
+	if back <= 0 or hist.is_empty():
+		return [s.position, s.rotation]
+	var e: Array = hist[maxi(0, hist.size() - 1 - back)][s.idx]
+	return [e[1], e[2]] if e[0] else []
+
+
 func _update_bullets(dt: float) -> void:
 	var keep := []
 	for b in bullets:
-		b.age += dt
-		b.v.y += gravity * Cfg.BULLET_GRAV * dt
-		var prev: Vector2 = b.p
-		b.p += b.v * dt
-		if b.age > Cfg.BULLET_LIFE:
-			continue
-		if terrain.solid_at(b.p):
-			if b.bounce > 0:
-				# ricochet: flip whichever axis ran into rock
-				b.bounce -= 1
-				stats.ricochets += 1
-				var fx_x: bool = terrain.solid_at(Vector2(b.p.x, prev.y))
-				var fx_y: bool = terrain.solid_at(Vector2(prev.x, b.p.y))
-				if fx_x or not fx_y:
-					b.v.x = -b.v.x
-				if fx_y or not fx_x:
-					b.v.y = -b.v.y
-				b.v *= 0.9
-				b.p = prev
-				fx.spark(b.p, Cfg.PU.bounce.col, 3)
-			else:
+		match move_bullet(b, dt):
+			"gone":
+				continue
+			"rock":
 				fx.spark(b.p, ships[b.owner].color)
 				continue
+			"bounced":
+				stats.ricochets += 1
+				fx.spark(b.p, Cfg.PU.bounce.col, 3)
+		# lag compensation: an online guest's bullet is tested against where the targets
+		# were on that guest's screen when they fired (b.back ticks ago), not where they are now
+		var back: int = b.get("back", 0)
 		var hit := false
 		for s in ships:
-			if _can_hit(s, b.owner, b.team, b.age, 0.3) and s.position.distance_to(b.p) < 22.0 and s.contains(b.p, 2.0):
+			if not _can_hit(s, b.owner, b.team, b.age, 0.3):
+				continue
+			var pose := _pose(s, back)
+			if pose.size() > 0 and pose[0].distance_to(b.p) < 22.0 and Hulls.contains(s.hull, (b.p - pose[0]).rotated(-pose[1]), 2.0):
 				damage(s, b.owner, "bullet")
 				hit = true
 				break
@@ -861,11 +900,13 @@ func fire(s) -> void:
 		missiles.append({"id": next_id, "p": s.position + f * 14.0, "v": f * 160.0 + s.vel * 0.5, "owner": s.idx, "team": s.team, "age": 0.0})
 		return
 	var spread := [-0.17, 0.0, 0.17] if s.has_fx("triple") else [0.0]
-	for a in spread:
-		var d: Vector2 = f.rotated(a)
+	var seq: int = net.fire_seq(s.idx)          # which guest input fired it (0 = not online)
+	var back: int = net.rewind_ticks(s.idx)     # lag compensation for online guests
+	for k in spread.size():
+		var d: Vector2 = f.rotated(spread[k])
 		next_id += 1
 		bullets.append({"id": next_id, "p": s.position + d * 13.0, "v": d * Cfg.BULLET_SPEED + s.vel, "owner": s.idx,
-				"team": s.team, "age": 0.0, "bounce": 3 if s.has_fx("bounce") else 0})
+				"team": s.team, "age": 0.0, "bounce": 3 if s.has_fx("bounce") else 0, "seq": seq, "sub": k, "back": back})
 
 
 ## A projectile reached ship s. Shields soak one hit.
@@ -942,8 +983,8 @@ func _net_test(args: PackedStringArray) -> void:
 		while state != "match_end":
 			await get_tree().process_frame
 		print("NETHOST world: ", world_label())
-		print("NETHOST match over: %s pts=%s kills=%s inputs_rcvd=%d max_snap=%dB ack=%s" % [msg, str(points), str(kills),
-				net.stat_inputs, net.stat_max_bytes, str(net.inputs.values().map(func(d): return d.ack))])
+		print("NETHOST match over: %s pts=%s kills=%s inputs_rcvd=%d max_snap=%dB avg_rewind=%.0fms ack=%s" % [msg, str(points), str(kills),
+				net.stat_inputs, net.stat_max_bytes, 1000.0 * DT * net.stat_rewind[0] / maxi(net.stat_rewind[1], 1), str(net.inputs.values().map(func(d): return d.ack))])
 		await get_tree().create_timer(1.0).timeout
 		get_tree().quit()
 	else:
@@ -969,6 +1010,7 @@ func _net_test(args: PackedStringArray) -> void:
 				print("SHOT ", ProjectSettings.globalize_path("user://shot.png"))
 				break
 		var st: Dictionary = net.stat
+		print("NETJOIN own bullets drawn instantly=%d matched to host's=%d never fired by host=%d" % [st.ghosts, st.ghost_matched, st.ghost_unmatched])
 		print("NETJOIN snaps=%d events=%d maps=%d map_mismatch=%d saw_play=%s my_alive_ticks=%d corr_avg=%.2fpx corr_max=%.1fpx status='%s'" % [
 				st.snaps, st.events, st.maps, st.map_mismatch, seen_play, mine_alive,
 				st.corr_sum / maxf(st.corr_n, 1), st.corr_max, net.status])

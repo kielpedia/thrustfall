@@ -164,6 +164,11 @@ func _settle(prev: Vector2) -> void:
 
 func _try_fire(inp: Dictionary) -> void:
 	if sim_only:
+		# online guest: show our bullets right away; the host fires the real ones
+		if inp.fire and cd <= 0.0:
+			cd = Cfg.FIRE_CD * (0.35 if has_fx("rapid") else 1.0)
+			if not quiet and missiles == 0:
+				main.net.ghost_fire(self)
 		return
 	if inp.fire and cd <= 0.0:
 		cd = Cfg.FIRE_CD * (0.35 if has_fx("rapid") else 1.0)

@@ -16,6 +16,7 @@ const PORT := 7777
 const SEND_EVERY := 3            # physics ticks between snapshots (120/3 = 40 per second)
 const INTERP_DELAY := 0.075      # seconds clients draw remote things in the past
 const CFG_PATH := "user://net.cfg"
+const MAX_REWIND := 30           # ticks (0.25 s): most lag compensation a guest's shot can get
 
 var main
 var peer: ENetMultiplayerPeer
@@ -33,6 +34,7 @@ var tick := 0
 var host_t := 0.0
 var stat_inputs := 0
 var stat_max_bytes := 0
+var stat_rewind := [0, 0]        # sum of rewind ticks, shots
 
 # client side
 var my_id := 0
@@ -43,7 +45,8 @@ var rt := -1.0                   # render time on the host clock
 var ev_queue := []               # [host_t, event]
 var map_seed := -1
 var later := []                  # [due_ms, Callable] for --lag
-var stat := {"snaps": 0, "events": 0, "maps": 0, "map_mismatch": 0, "corr_sum": 0.0, "corr_n": 0, "corr_max": 0.0}
+var ghosts := []                 # our own bullets, drawn the moment we fire (see ghost_fire)
+var stat := {"ghosts": 0, "ghost_matched": 0, "ghost_unmatched": 0, "snaps": 0, "events": 0, "maps": 0, "map_mismatch": 0, "corr_sum": 0.0, "corr_n": 0, "corr_max": 0.0}
 
 
 func _ready() -> void:
@@ -126,6 +129,7 @@ func leave(reason := "") -> void:
 	peer = null
 	mode = ""
 	later.clear()
+	ghosts.clear()
 	_say(reason, Color("ff9f1c"))
 	# back to an offline lobby: online seats become CPUs again
 	for s in main.slots:
@@ -217,7 +221,7 @@ func _seat(id: int) -> bool:
 	main._fix_color(pick)
 	if main.teams:
 		main._balance_teams()
-	inputs[pick] = {"q": [], "cur": _idle(), "last": 0, "ack": 0}
+	inputs[pick] = {"q": [], "cur": _idle(), "last": 0, "ack": 0, "view": -1.0}
 	return true
 
 
@@ -251,13 +255,15 @@ func _hello(version: String) -> void:
 
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 2)
-func _rpc_input(batch: Array) -> void:
+func _rpc_input(batch: Array, view_t: float) -> void:
 	if not is_host():
 		return
 	var k := slot_of(multiplayer.get_remote_sender_id())
 	if k < 0 or not inputs.has(k):
 		return
 	var d: Dictionary = inputs[k]
+	# view_t = the moment (host clock) the guest was looking at: other ships are drawn in the past
+	d.view = maxf(d.view, view_t)
 	# batch = the last few inputs, oldest first, each [seq, turn, thrust, fire]
 	for e in batch:
 		if e[0] > d.last:
@@ -274,6 +280,22 @@ func on_spawn(k: int) -> void:
 	if inputs.has(k):
 		inputs[k].q.clear()
 		inputs[k].cur = _idle()
+
+
+## Host: the input sequence number that fired a shot from slot k (0 = not an online guest).
+func fire_seq(k: int) -> int:
+	return inputs[k].ack if is_host() and inputs.has(k) else 0
+
+
+## Host: how many ticks to rewind targets for a shot from slot k, so it is judged against
+## what that guest saw on screen when they fired.
+func rewind_ticks(k: int) -> int:
+	if not is_host() or not inputs.has(k) or inputs[k].view < 0.0:
+		return 0
+	var r := clampi(roundi((host_t - inputs[k].view) / main.DT), 0, MAX_REWIND)
+	stat_rewind[0] += r
+	stat_rewind[1] += 1
+	return r
 
 
 ## Host: the input to use for net slot k this tick.
@@ -355,7 +377,7 @@ func _pack() -> Dictionary:
 				s.missiles, s.effects, s.hull, 0, 0, s.team, s.is_cpu, ack, s.life_t, s.cd])
 	var bl := []
 	for b in m.bullets:
-		bl.append([b.id, b.p, b.v, b.owner, b.bounce])
+		bl.append([b.id, b.p, b.v, b.owner, b.bounce, b.get("seq", 0), b.get("sub", 0)])
 	var ms := []
 	for x in m.missiles:
 		ms.append([x.id, x.p, x.v, x.owner])
@@ -537,10 +559,12 @@ func client_tick(dt: float) -> void:
 		var batch := []
 		for p in pending.slice(maxi(0, pending.size() - 4)):
 			batch.append([p[0], p[1].turn, p[1].thrust, p[1].fire])
-		_send(func(): _rpc_input.rpc_id(1, batch))
+		var view := rt
+		_send(func(): _rpc_input.rpc_id(1, batch, view))
 		ship.sim_only = true
 		ship.step(dt, inp)
 		ship.vis_off *= exp(-dt * 12.0)
+	_update_ghosts(dt, k)
 	# fx events, in step with the interpolated picture
 	while ev_queue.size() > 0 and ev_queue[0][0] <= rt:
 		_play(ev_queue.pop_front()[1])
@@ -597,7 +621,12 @@ func _interpolate(mine: int) -> void:
 		var p: Vector2 = x[1]
 		if old.has(x[0]):
 			p = old[x[0]][1].lerp(x[1], f)
+		if x[3] == mine and _ghost_keys.has(_gkey(x[5], x[6])):
+			continue   # we're already drawing this one ourselves
 		bl.append({"id": x[0], "p": p + x[2] * ahead, "v": x[2], "owner": x[3], "bounce": x[4]})
+	for g in ghosts:
+		if not g.hidden:
+			bl.append({"id": -1, "p": g.p, "v": g.v, "owner": mine, "bounce": g.bounce})
 	m.bullets = bl
 	var oldm := {}
 	for x in a.m:
@@ -611,6 +640,68 @@ func _interpolate(mine: int) -> void:
 		if randf() < 0.6:
 			m.fx.exhaust(p - x[2].normalized() * 6.0, -x[2] * 0.3)
 	m.missiles = ms
+
+
+# ---------------------------------------------------------------- client: instant own bullets
+# When we fire, we draw our bullets at once (same physics as the host) instead of waiting
+# a round trip. Each is tagged with the input that fired it; once the host's real bullet
+# with that tag shows up, we keep drawing ours in its place, and drop it when the host's
+# one is gone (hit something). If the host never fired it, ours quietly disappears.
+
+var _ghost_keys := {}
+
+
+static func _gkey(seq_n: int, sub: int) -> int:
+	return seq_n * 4 + sub
+
+
+func ghost_fire(ship) -> void:
+	var f: Vector2 = ship.fwd()
+	var spread := [-0.17, 0.0, 0.17] if ship.has_fx("triple") else [0.0]
+	for k in spread.size():
+		var d: Vector2 = f.rotated(spread[k])
+		ghosts.append({"key": _gkey(seq, k), "p": ship.position + d * 13.0, "v": d * Cfg.BULLET_SPEED + ship.vel,
+				"age": 0.0, "bounce": 3 if ship.has_fx("bounce") else 0, "seen": false, "hidden": false})
+		stat.ghosts += 1
+
+
+func _update_ghosts(dt: float, mine: int) -> void:
+	if ghosts.is_empty():
+		_ghost_keys.clear()
+		return
+	var live := {}   # tags of our bullets the host still has, per the newest snapshot
+	if mine >= 0:
+		for x in snaps[-1].b:
+			if x[3] == mine and x[5] > 0:
+				live[_gkey(x[5], x[6])] = true
+	var keep := []
+	_ghost_keys.clear()
+	for g in ghosts:
+		if not g.hidden:
+			var r: String = main.move_bullet(g, dt)
+			if r == "rock" or r == "gone":
+				g.hidden = true
+			else:
+				# touching an enemy as we see it: the host will most likely count it, so stop drawing
+				for s in main.ships:
+					if s.alive and s.idx != mine and s.invuln <= 0.0 and s.position.distance_to(g.p) < 22.0 and s.contains(g.p, 2.0):
+						if not main.teams or main.friendly_fire or s.team != main.ships[mine].team:
+							g.hidden = true
+							break
+		else:
+			g.age += dt
+		if live.has(g.key):
+			if not g.seen:
+				g.seen = true
+				stat.ghost_matched += 1
+		elif g.seen:
+			continue      # the host's bullet is gone: hit something or expired
+		elif g.age > 1.0:
+			stat.ghost_unmatched += 1
+			continue      # the host never fired it (we mispredicted): drop it
+		keep.append(g)
+		_ghost_keys[g.key] = true
+	ghosts = keep
 
 
 func _play(e: Array) -> void:
